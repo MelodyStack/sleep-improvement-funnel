@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Answers, Section } from './types'
-import { FAQS, PLAN_STAGES, REVIEWS, WEEK_PLAN } from './content'
+import { FAQS, MOTIVATIONS, PLAN_STAGES, REVIEWS, WEEK_PLAN } from './content'
 import './index.css'
 
 type StepId =
   | 'motivation'
+  | 'boost'
   | 'social'
   | 'value'
   | 'age'
@@ -13,9 +14,10 @@ type StepId =
   | 'wakeFeeling'
   | 'stress'
   | 'scienceSleep'
-  | 'activity'
-  | 'walkHabit'
+  | 'sleepHours'
+  | 'bedtime'
   | 'sleepGoal'
+  | 'rewardPref'
   | 'commitment'
   | 'loader'
   | 'results'
@@ -28,6 +30,7 @@ type StepId =
 
 const STEPS: StepId[] = [
   'motivation',
+  'boost',
   'social',
   'value',
   'age',
@@ -36,9 +39,10 @@ const STEPS: StepId[] = [
   'wakeFeeling',
   'stress',
   'scienceSleep',
-  'activity',
-  'walkHabit',
+  'sleepHours',
+  'bedtime',
   'sleepGoal',
+  'rewardPref',
   'commitment',
   'loader',
   'results',
@@ -52,15 +56,15 @@ const STEPS: StepId[] = [
 
 function sectionFor(step: StepId): Section {
   if (['age', 'sleepQuality', 'issues', 'wakeFeeling', 'stress', 'scienceSleep'].includes(step)) return 'about'
-  if (['activity', 'walkHabit', 'sleepGoal', 'commitment'].includes(step)) return 'body'
+  if (['sleepHours', 'bedtime', 'sleepGoal', 'rewardPref', 'commitment'].includes(step)) return 'sleep'
   if (['loader', 'results', 'journey', 'twelveWeek', 'transformation', 'email', 'paywall', 'checkout'].includes(step))
     return 'plan'
   return null
 }
 
-function progressFor(step: StepId): { about: number; body: number; plan: number } {
+function progressFor(step: StepId): { about: number; sleep: number; plan: number } {
   const aboutSteps: StepId[] = ['age', 'sleepQuality', 'issues', 'wakeFeeling', 'stress', 'scienceSleep']
-  const bodySteps: StepId[] = ['activity', 'walkHabit', 'sleepGoal', 'commitment']
+  const sleepSteps: StepId[] = ['sleepHours', 'bedtime', 'sleepGoal', 'rewardPref', 'commitment']
   const planSteps: StepId[] = [
     'loader',
     'results',
@@ -71,33 +75,41 @@ function progressFor(step: StepId): { about: number; body: number; plan: number 
     'paywall',
     'checkout',
   ]
-  const order = [...aboutSteps, ...bodySteps, ...planSteps]
+  const order = [...aboutSteps, ...sleepSteps, ...planSteps]
   const idx = order.indexOf(step)
-  if (idx < 0) return { about: 0, body: 0, plan: 0 }
+  if (idx < 0) return { about: 0, sleep: 0, plan: 0 }
 
   const aboutDone = idx >= aboutSteps.length
-  const bodyDone = idx >= aboutSteps.length + bodySteps.length
+  const sleepDone = idx >= aboutSteps.length + sleepSteps.length
   const aboutIdx = aboutSteps.indexOf(step)
-  const bodyIdx = bodySteps.indexOf(step)
+  const sleepIdx = sleepSteps.indexOf(step)
   const planIdx = planSteps.indexOf(step)
 
   return {
     about: aboutDone ? 100 : Math.round(((aboutIdx + 1) / aboutSteps.length) * 100),
-    body: bodyDone ? 100 : bodyIdx >= 0 ? Math.round(((bodyIdx + 1) / bodySteps.length) * 100) : 0,
+    sleep: sleepDone ? 100 : sleepIdx >= 0 ? Math.round(((sleepIdx + 1) / sleepSteps.length) * 100) : 0,
     plan: planIdx >= 0 ? Math.round(((planIdx + 1) / planSteps.length) * 100) : 0,
   }
 }
 
 function sleepScore(a: Answers): number {
-  let score = 72
-  if (a.sleepQuality === 'barely') score -= 18
-  if (a.sleepQuality === 'wake') score -= 12
+  let score = 70
+  if (a.sleepQuality === 'barely') score -= 20
+  if (a.sleepQuality === 'wake') score -= 14
   if (a.sleepQuality === 'struggle') score -= 10
   if (a.issues.length >= 3) score -= 8
   if (a.stress === 'high') score -= 6
   if (a.wakeFeeling === 'exhausted') score -= 6
-  if (a.walkHabit === 'daily') score += 6
-  return Math.max(28, Math.min(86, score))
+  if (a.sleepHours === 'under5' || a.sleepHours === '5to6') score -= 8
+  if (a.commitment === 'yes') score += 4
+  return Math.max(24, Math.min(88, score))
+}
+
+function rewardPotential(a: Answers): string {
+  if (a.commitment === 'yes' && a.sleepGoal === '8') return '$40 to $80'
+  if (a.commitment === 'yes') return '$30 to $60'
+  if (a.commitment === 'think') return '$20 to $45'
+  return '$15 to $35'
 }
 
 export default function App() {
@@ -107,11 +119,13 @@ export default function App() {
   const [reviewIdx, setReviewIdx] = useState(0)
   const [stage, setStage] = useState(0)
   const [seconds, setSeconds] = useState(9 * 60 + 48)
+  const [loaderChecks, setLoaderChecks] = useState(0)
 
   const step = STEPS[index]
   const section = sectionFor(step)
   const bars = progressFor(step)
   const score = useMemo(() => sleepScore(answers), [answers])
+  const motivation = answers.motivation ? MOTIVATIONS[answers.motivation] : null
 
   useEffect(() => {
     if (step !== 'paywall') return
@@ -127,8 +141,17 @@ export default function App() {
 
   useEffect(() => {
     if (step !== 'loader') return
-    const t = window.setTimeout(() => go(1), 2600)
-    return () => window.clearTimeout(t)
+    setLoaderChecks(0)
+    const a = window.setTimeout(() => setLoaderChecks(1), 900)
+    const b = window.setTimeout(() => setLoaderChecks(2), 1800)
+    const c = window.setTimeout(() => setLoaderChecks(3), 2700)
+    const d = window.setTimeout(() => go(1), 3400)
+    return () => {
+      window.clearTimeout(a)
+      window.clearTimeout(b)
+      window.clearTimeout(c)
+      window.clearTimeout(d)
+    }
   }, [step])
 
   function go(delta: number) {
@@ -136,7 +159,7 @@ export default function App() {
     setIndex((i) => Math.max(0, Math.min(STEPS.length - 1, i + delta)))
   }
 
-  function selectAndAdvance(patch: Partial<Answers>, note?: string, delay = 650) {
+  function selectAndAdvance(patch: Partial<Answers>, note?: string, delay = 700) {
     setAnswers((a) => ({ ...a, ...patch }))
     if (note) setMicro(note)
     window.setTimeout(() => go(1), delay)
@@ -151,12 +174,13 @@ export default function App() {
 
   const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
   const ss = String(seconds % 60).padStart(2, '0')
+  const review = REVIEWS[reviewIdx]
 
   return (
     <div className="app-shell">
       <div className="phone">
         {section && (
-          <div className="step" style={{ paddingBottom: 0, flex: '0 0 auto' }}>
+          <div className="step progress-wrap">
             <div className="progress">
               <button className="back-btn" type="button" aria-label="Go back" onClick={() => go(-1)}>
                 ‹
@@ -164,7 +188,7 @@ export default function App() {
               {(
                 [
                   ['about', 'About you', bars.about],
-                  ['body', 'Your sleep', bars.body],
+                  ['sleep', 'Your sleep', bars.sleep],
                   ['plan', 'Your plan', bars.plan],
                 ] as const
               ).map(([key, label, value]) => (
@@ -185,26 +209,24 @@ export default function App() {
         {step === 'motivation' && (
           <div className="step">
             <div className="brand-pill">
-              NightWalk <span>· Better sleep</span>
+              Sleep better <span>· Earn rewards</span>
             </div>
-            <h1 style={{ marginTop: 18 }}>What would help your sleep the most right now?</h1>
+            <h1 style={{ marginTop: 18 }}>What will motivate you to sleep better?</h1>
             <div className="options">
-              {[
-                ['calm', 'Quieter mind at bedtime', '🧠'],
-                ['stay', 'Staying asleep through the night', '🌙'],
-                ['energy', 'Waking up rested', '☀️'],
-                ['all', 'All of the above', '✨'],
-              ].map(([id, label, icon]) => (
+              {(
+                [
+                  ['plan', MOTIVATIONS.plan.label, MOTIVATIONS.plan.icon],
+                  ['rewards', MOTIVATIONS.rewards.label, MOTIVATIONS.rewards.icon],
+                  ['coaching', MOTIVATIONS.coaching.label, MOTIVATIONS.coaching.icon],
+                  ['social', MOTIVATIONS.social.label, MOTIVATIONS.social.icon],
+                  ['all', MOTIVATIONS.all.label, MOTIVATIONS.all.icon],
+                ] as const
+              ).map(([id, label, icon]) => (
                 <button
                   key={id}
                   className={`option ${answers.motivation === id ? 'selected' : ''}`}
                   type="button"
-                  onClick={() =>
-                    selectAndAdvance(
-                      { motivation: id },
-                      id === 'all' ? 'We can work on all of that.' : 'Noted.',
-                    )
-                  }
+                  onClick={() => selectAndAdvance({ motivation: id }, MOTIVATIONS[id].micro)}
                 >
                   <span className="icon">{icon}</span>
                   <span className="copy">
@@ -218,20 +240,13 @@ export default function App() {
           </div>
         )}
 
-        {step === 'social' && (
+        {step === 'boost' && (
           <div className="step">
-            <div className="brand-pill">✓ {answers.motivation === 'all' ? 'All of the above' : 'Your pick'}</div>
-            <h1 style={{ marginTop: 16 }}>Better sleep through walking</h1>
-            <p className="lede">Used by people who fixed their nights with a simple evening walk.</p>
-            <div className="review-card">
-              <div className="who">
-                <div className="avatar">{REVIEWS[reviewIdx].initials}</div>
-                <div>
-                  <strong>{REVIEWS[reviewIdx].name}</strong>
-                  <div className="stars-row">★★★★★</div>
-                </div>
-              </div>
-              <p>“{REVIEWS[reviewIdx].quote}”</p>
+            <div className="brand-pill soft">✓ {(motivation ?? MOTIVATIONS.all).label}</div>
+            <div className="stat-block boost">
+              <div className="big">2×</div>
+              <h1>{(motivation ?? MOTIVATIONS.all).boostTitle}</h1>
+              <p>{(motivation ?? MOTIVATIONS.all).boostBody}</p>
             </div>
             <div className="footer-cta">
               <button className="btn btn-primary" type="button" onClick={() => go(1)}>
@@ -241,24 +256,62 @@ export default function App() {
           </div>
         )}
 
+        {step === 'social' && (
+          <div className="step">
+            <div className="brand-pill soft">✓ {motivation?.label ?? 'Your pick'}</div>
+            <h1 style={{ marginTop: 16 }}>Sleep better & earn rewards</h1>
+            <p className="lede">Trusted by members who get paid for hitting their sleep goals.</p>
+            <div className="review-card">
+              <div className="who">
+                <div className="avatar">{review.initials}</div>
+                <div>
+                  <strong>{review.name}</strong>
+                  <div className="stars-row">★★★★★</div>
+                </div>
+              </div>
+              <p>“{review.quote}”</p>
+            </div>
+            <div className="dots">
+              {REVIEWS.map((_, i) => (
+                <span key={i} className={i === reviewIdx ? 'on' : ''} />
+              ))}
+            </div>
+            <div className="footer-cta">
+              <button className="btn btn-primary" type="button" onClick={() => go(1)}>
+                Let's do this
+              </button>
+            </div>
+          </div>
+        )}
+
         {step === 'value' && (
           <div className="step">
-            <h1>Evening walks for deeper sleep</h1>
+            <h1>Hit your sleep goal. Earn gift cards.</h1>
             <p className="lede">
-              You get a 12-week walking plan timed for late day. It helps you wind down, feel ready for bed, and stay
-              asleep more often.
+              We will build a personal sleep plan that helps you rest better and earn rewards when you hit your nightly
+              goal.
             </p>
             <div className="hero-card">
-              <div className="hero-visual">
+              <div className="hero-visual reward-visual">
                 <div className="stars" />
                 <div className="moon" />
-                <strong>NightWalk plan</strong>
-                <p>20 to 30 min · easy pace · evening window</p>
+                <div className="reward-stack">
+                  <div className="goal-chip">7.5 hrs · Goal reached</div>
+                  <div className="reward-pill">
+                    <span>🎁</span>
+                    <div>
+                      <strong>+$5.00</strong>
+                      <small>Amazon gift card</small>
+                    </div>
+                  </div>
+                </div>
+                <strong>SleepClub plan</strong>
+                <p>Nightly goals · points · gift cards</p>
               </div>
             </div>
             <div className="footer-cta">
               <button className="btn btn-primary" type="button" onClick={() => go(1)}>
-                Build my sleep plan
+                Build my plan
               </button>
               <p className="hint">Takes about 2 minutes · Free to start</p>
             </div>
@@ -267,15 +320,18 @@ export default function App() {
 
         {step === 'age' && (
           <div className="step">
-            <h1>What’s your age range?</h1>
-            <p className="lede">Sleep needs change with age. We match pace and timing to your group.</p>
+            <div className="brand-pill">
+              Sleep better <span>· Earn rewards</span>
+            </div>
+            <h1 style={{ marginTop: 16 }}>What's your age range?</h1>
+            <p className="lede">One quick question so we can match your plan and reward pace.</p>
             <div className="grid-2">
               {[
-                ['30-39', '30-39'],
-                ['40-49', '40-49'],
-                ['50-59', '50-59'],
-                ['60+', '60+'],
-              ].map(([id, label]) => (
+                ['30-39', '30-39', '/images/age-30-39.jpg'],
+                ['40-49', '40-49', '/images/age-40-49.jpg'],
+                ['50-59', '50-59', '/images/age-50-59.jpg'],
+                ['60+', '60+', '/images/age-60-plus.jpg'],
+              ].map(([id, label, src]) => (
                 <button
                   key={id}
                   type="button"
@@ -283,11 +339,16 @@ export default function App() {
                   onClick={() =>
                     selectAndAdvance(
                       { ageRange: id },
-                      id === '30-39' ? 'Good age to lock in sleep habits.' : 'Pace and recovery will match your age group.',
+                      id === '30-39'
+                        ? 'Good age to lock in a sleep habit that pays.'
+                        : 'Your plan and recovery pace will match your age group.',
                     )
                   }
                 >
-                  <div className="photo">{label}</div>
+                  <div className="photo">
+                    <img src={src} alt={`${label} age group`} />
+                    <span>{label}</span>
+                  </div>
                 </button>
               ))}
             </div>
@@ -309,7 +370,7 @@ export default function App() {
                   key={id}
                   type="button"
                   className={`option ${answers.sleepQuality === id ? 'selected' : ''}`}
-                  onClick={() => selectAndAdvance({ sleepQuality: id }, 'We will plan around that.')}
+                  onClick={() => selectAndAdvance({ sleepQuality: id }, 'We will plan rewards around that.')}
                 >
                   <span className="icon">{icon}</span>
                   <span className="copy">
@@ -332,7 +393,7 @@ export default function App() {
                 ['wake3', '3 a.m. wake-ups', '🕐'],
                 ['stress', 'Daytime stress that follows me to bed', '😤'],
                 ['screens', 'Phone / screens before bed', '📱'],
-                ['cravings', 'Late-night cravings', '🍫'],
+                ['tired', 'Always tired during the day', '😴'],
               ].map(([id, label, icon]) => (
                 <button
                   key={id}
@@ -412,22 +473,20 @@ export default function App() {
 
         {step === 'scienceSleep' && (
           <div className="step">
-            <p className="hint" style={{ textAlign: 'left', margin: 0 }}>
-              BASED ON YOUR ANSWERS
-            </p>
-            <h1 style={{ marginTop: 8 }}>Poor sleep makes weight harder and stress louder</h1>
+            <p className="eyebrow">Based on your answers</p>
+            <h1 style={{ marginTop: 8 }}>Rewards help people sleep longer. Better sleep makes days easier.</h1>
             <div className="loop">
               <span>Short sleep</span>
               <span>↑ Hunger</span>
-              <span>↑ Cortisol</span>
-              <span>Cravings</span>
-              <span>Worse nights</span>
+              <span>↑ Stress</span>
+              <span>Harder nights</span>
+              <span>Missed goals</span>
             </div>
             <div className="insight">
               <p>
-                Research shows sleep restriction increases hunger and calorie intake, and can shift weight loss away from
-                fat when you are dieting. Walking helps by making you sleepier later, supporting your body clock, and
-                calming stress. Nights get quieter. Days get easier.
+                Sleep incentive studies show people sleep longer when good nights are paid. Short sleep also raises
+                hunger and can make weight harder to manage. SleepClub pairs a clear nightly goal with gift cards so
+                you stick with better rest long enough for energy, mood, and appetite to improve.
               </p>
             </div>
             <div className="footer-cta">
@@ -438,50 +497,24 @@ export default function App() {
           </div>
         )}
 
-        {step === 'activity' && (
+        {step === 'sleepHours' && (
           <div className="step">
-            <h1>How active are you right now?</h1>
+            <h1>How many hours do you usually sleep?</h1>
             <div className="options">
               {[
-                ['sitting', 'Mostly sitting', '💻'],
-                ['light', 'Light activity', '🚶'],
-                ['active', 'Very active', '👟'],
+                ['under5', 'Under 5 hours', '😮'],
+                ['5to6', '5 to 6 hours', '😕'],
+                ['6to7', '6 to 7 hours', '😐'],
+                ['7plus', '7+ hours', '😌'],
               ].map(([id, label, icon]) => (
                 <button
                   key={id}
                   type="button"
-                  className={`option ${answers.activity === id ? 'selected' : ''}`}
-                  onClick={() => selectAndAdvance({ activity: id })}
-                >
-                  <span className="icon">{icon}</span>
-                  <span className="copy">
-                    <strong>{label}</strong>
-                  </span>
-                  <span className="radio">{answers.activity === id ? '✓' : ''}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {step === 'walkHabit' && (
-          <div className="step">
-            <h1>Do you walk regularly?</h1>
-            <div className="options">
-              {[
-                ['no', 'Not really', '🌱'],
-                ['stopped', 'I used to, but stopped', '😬'],
-                ['sometimes', 'Sometimes', '🚶'],
-                ['daily', 'Yes, almost daily', '👟'],
-              ].map(([id, label, icon]) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={`option ${answers.walkHabit === id ? 'selected' : ''}`}
+                  className={`option ${answers.sleepHours === id ? 'selected' : ''}`}
                   onClick={() =>
                     selectAndAdvance(
-                      { walkHabit: id },
-                      id === 'daily' ? 'We will time those walks for sleep.' : 'We will start easy and build up.',
+                      { sleepHours: id },
+                      id === '7plus' ? 'We will help you protect that streak and earn for it.' : 'We will set a goal you can hit and get paid for.',
                     )
                   }
                 >
@@ -489,7 +522,35 @@ export default function App() {
                   <span className="copy">
                     <strong>{label}</strong>
                   </span>
-                  <span className="radio">{answers.walkHabit === id ? '✓' : ''}</span>
+                  <span className="radio">{answers.sleepHours === id ? '✓' : ''}</span>
+                </button>
+              ))}
+            </div>
+            {micro && <p className="micro">{micro}</p>}
+          </div>
+        )}
+
+        {step === 'bedtime' && (
+          <div className="step">
+            <h1>When do you usually try to sleep?</h1>
+            <div className="options">
+              {[
+                ['before10', 'Before 10 p.m.', '🕘'],
+                ['10to11', '10 to 11 p.m.', '🕙'],
+                ['11to12', '11 p.m. to midnight', '🕚'],
+                ['after12', 'After midnight', '🌙'],
+              ].map(([id, label, icon]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`option ${answers.bedtime === id ? 'selected' : ''}`}
+                  onClick={() => selectAndAdvance({ bedtime: id }, 'Your reward window will match this schedule.')}
+                >
+                  <span className="icon">{icon}</span>
+                  <span className="copy">
+                    <strong>{label}</strong>
+                  </span>
+                  <span className="radio">{answers.bedtime === id ? '✓' : ''}</span>
                 </button>
               ))}
             </div>
@@ -499,19 +560,20 @@ export default function App() {
 
         {step === 'sleepGoal' && (
           <div className="step">
-            <h1>Your main sleep goal?</h1>
+            <h1>Your sleep goal to earn rewards?</h1>
+            <p className="lede">Pick a target you can hit most nights. Consistency pays more than perfection.</p>
             <div className="options">
               {[
-                ['fall', 'Fall asleep faster', '🛏️'],
-                ['stay', 'Stay asleep longer', '🌙'],
-                ['wake', 'Wake up refreshed', '☀️'],
-                ['all', 'All three', '✨'],
+                ['6.5', '6.5 hours', '🎯'],
+                ['7', '7 hours', '🎯'],
+                ['7.5', '7.5 hours', '🎯'],
+                ['8', '8 hours', '🎯'],
               ].map(([id, label, icon]) => (
                 <button
                   key={id}
                   type="button"
                   className={`option ${answers.sleepGoal === id ? 'selected' : ''}`}
-                  onClick={() => selectAndAdvance({ sleepGoal: id }, 'The 12-week plan focuses on that.')}
+                  onClick={() => selectAndAdvance({ sleepGoal: id }, 'Hit this goal to earn points toward gift cards.')}
                 >
                   <span className="icon">{icon}</span>
                   <span className="copy">
@@ -525,10 +587,38 @@ export default function App() {
           </div>
         )}
 
+        {step === 'rewardPref' && (
+          <div className="step">
+            <h1>Which rewards motivate you most?</h1>
+            <div className="options">
+              {[
+                ['amazon', 'Amazon gift cards', '📦'],
+                ['coffee', 'Coffee / food cards', '☕'],
+                ['retail', 'Retail gift cards', '🛍️'],
+                ['any', 'Any gift card is fine', '🎁'],
+              ].map(([id, label, icon]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`option ${answers.rewardPref === id ? 'selected' : ''}`}
+                  onClick={() => selectAndAdvance({ rewardPref: id }, 'We will prioritize those redemptions.')}
+                >
+                  <span className="icon">{icon}</span>
+                  <span className="copy">
+                    <strong>{label}</strong>
+                  </span>
+                  <span className="radio">{answers.rewardPref === id ? '✓' : ''}</span>
+                </button>
+              ))}
+            </div>
+            {micro && <p className="micro">{micro}</p>}
+          </div>
+        )}
+
         {step === 'commitment' && (
           <div className="step">
-            <h1>Can you walk 20 to 30 minutes most evenings?</h1>
-            <p className="lede">This is the core habit. Easy talking pace. No running required.</p>
+            <h1>Can you track your sleep most nights for 12 weeks?</h1>
+            <p className="lede">Tracking is how you earn. A few taps to log a good night is enough.</p>
             <div className="options">
               {[
                 ['yes', 'Yes, I can do that', '💪'],
@@ -542,7 +632,7 @@ export default function App() {
                   onClick={() =>
                     selectAndAdvance(
                       { commitment: id },
-                      id === 'yes' ? 'Showing up most nights is what helps.' : 'We will keep the start simple.',
+                      id === 'yes' ? 'Showing up most nights is what earns rewards.' : 'We will keep logging simple.',
                     )
                   }
                 >
@@ -560,24 +650,39 @@ export default function App() {
 
         {step === 'loader' && (
           <div className="loader-wrap">
+            <div className="loader-hero">
+              <img
+                src="/images/loader-hero.jpg"
+                alt="Peaceful sleep with gift card rewards"
+              />
+              <div className="loader-hero-fade" />
+            </div>
             <h1>Building your plan</h1>
-            <p className="lede">Setting up your 12-week NightWalk sleep plan...</p>
+            <p className="lede">Matching your sleep goals with gift card rewards...</p>
             <div className="loader-bar">
               <i />
             </div>
             <div className="check-list">
-              <div>
-                <span>Sleep pattern</span>
-                <span className="ok">✓</span>
-              </div>
-              <div>
-                <span>Stress & evening timing</span>
-                <span className="ok">✓</span>
-              </div>
-              <div>
-                <span>Walking progression</span>
-                <span className="ok">✓</span>
-              </div>
+              {(
+                [
+                  [1, 'Sleep pattern', '/images/icon-sleep.jpg', 'Analyzing your nights'],
+                  [2, 'Goal & reward path', '/images/icon-rewards.jpg', 'Linking goals to gift cards'],
+                  [3, '12-week progression', '/images/icon-plan.jpg', 'Scheduling your plan'],
+                ] as const
+              ).map(([need, label, src, detail]) => {
+                const done = loaderChecks >= need
+                const active = loaderChecks === need - 1 || (need === 1 && loaderChecks === 0)
+                return (
+                  <div key={label} className={`check-row ${done ? 'done' : ''} ${active && !done ? 'active' : ''}`}>
+                    <img className="check-icon" src={src} alt="" />
+                    <div className="check-copy">
+                      <strong>{label}</strong>
+                      <small>{detail}</small>
+                    </div>
+                    <span className={`ok ${done ? 'checked' : ''}`}>{done ? '✓' : '…'}</span>
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
@@ -585,8 +690,8 @@ export default function App() {
         {step === 'results' && (
           <div className="step">
             <h1>Your sleep score</h1>
-            <p className="lede">Based on your answers. This is a starting point, not a diagnosis.</p>
-            <div className="score-ring">
+            <p className="lede">Based on your answers. A starting point, not a diagnosis.</p>
+            <div className="score-ring" style={{ ['--score' as string]: `${score}%` }}>
               <div>
                 <strong>{score}</strong>
                 <div style={{ fontSize: 12, color: 'var(--muted)' }}>/ 100</div>
@@ -602,14 +707,14 @@ export default function App() {
                 <strong>{answers.stress === 'high' ? 'High' : answers.stress === 'low' ? 'Low' : 'Medium'}</strong>
               </div>
               <div className="metric">
-                <small>Walk base</small>
-                <strong>{answers.walkHabit === 'daily' ? 'Strong' : 'Building'}</strong>
+                <small>Earn range</small>
+                <strong>{rewardPotential(answers)}</strong>
               </div>
             </div>
             <div className="insight">
               <p>
-                An evening walking plan over 12 weeks uses light movement, better timing, and a clear bedtime routine.
-                That helps most when stress or broken sleep is part of your pattern.
+                Members with a similar profile often aim for {answers.sleepGoal ?? '7.5'} hours and redeem about{' '}
+                {rewardPotential(answers)} in gift cards over 12 weeks when they hit most nightly goals. Results vary.
               </p>
             </div>
             <div className="footer-cta">
@@ -622,7 +727,7 @@ export default function App() {
 
         {step === 'journey' && (
           <div className="step">
-            <h1>Your 4 sleep stages</h1>
+            <h1>Your 4 reward stages</h1>
             <div className="stages">
               {PLAN_STAGES.map((s, i) => (
                 <button key={s.id} type="button" className={stage === i ? 'on' : ''} onClick={() => setStage(i)}>
@@ -630,8 +735,11 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <div className="plan-card">
-              <div className="visual">{PLAN_STAGES[stage].title}</div>
+            <div className="plan-card" key={PLAN_STAGES[stage].id}>
+              <div className="visual">
+                <img src={PLAN_STAGES[stage].image} alt={PLAN_STAGES[stage].title} />
+                <span>{PLAN_STAGES[stage].title}</span>
+              </div>
               <div className="body">
                 <p>{PLAN_STAGES[stage].body}</p>
               </div>
@@ -653,10 +761,10 @@ export default function App() {
 
         {step === 'twelveWeek' && (
           <div className="step">
-            <h1>Your 12-week better-sleep walking plan</h1>
+            <h1>Your 12-week get-paid-to-sleep plan</h1>
             <p className="lede">
-              Evening-first walks that get a bit longer over time. Research links this kind of routine with longer
-              sleep and fewer overnight wake-ups. You follow it as a simple weekly habit.
+              Nightly goals, simple tracking, and gift cards when you hit them. Research on sleep incentives shows
+              rewards help people sleep longer. You follow it as a weekly habit.
             </p>
             <div className="week-grid">
               {WEEK_PLAN.map((w) => (
@@ -667,8 +775,8 @@ export default function App() {
               ))}
             </div>
             <div className="warn">
-              Educational program only, not medical treatment. Seek care for severe insomnia, apnea symptoms, or sudden
-              health changes.
+              Educational rewards program only, not medical treatment. Seek care for severe insomnia, apnea symptoms, or
+              sudden health changes.
             </div>
             <div className="footer-cta">
               <button className="btn btn-primary" type="button" onClick={() => go(1)}>
@@ -681,38 +789,40 @@ export default function App() {
         {step === 'transformation' && (
           <div className="step">
             <h1>What members typically aim for</h1>
-            <p className="lede">Example targets for people who walk most weeks for about 12 weeks. Not a guarantee.</p>
+            <p className="lede">Example targets for people who hit most sleep goals for about 12 weeks. Not a guarantee.</p>
             <div className="compare">
               <div className="compare-top">
                 <div className="now">
+                  <img src="/images/compare-now.jpg" alt="Rough nights now" />
                   <small>NOW</small>
                   <strong>Rough nights</strong>
                 </div>
                 <div className="goal">
+                  <img src="/images/compare-goal.jpg" alt="Paid good nights goal" />
                   <small>GOAL</small>
-                  <strong>Deeper rest</strong>
+                  <strong>Paid good nights</strong>
                 </div>
               </div>
               <table>
                 <tbody>
                   <tr>
-                    <td>Fall asleep</td>
-                    <td>Faster, less scrolling</td>
+                    <td>Sleep goal</td>
+                    <td>Hit most nights</td>
                   </tr>
                   <tr>
-                    <td>Overnight wake-ups</td>
-                    <td>Fewer / shorter</td>
+                    <td>Gift cards</td>
+                    <td>Earn & redeem</td>
+                  </tr>
+                  <tr>
+                    <td>Fall asleep</td>
+                    <td>Faster, less scrolling</td>
                   </tr>
                   <tr>
                     <td>Morning energy</td>
                     <td>Clearer, steadier</td>
                   </tr>
                   <tr>
-                    <td>Evening stress</td>
-                    <td>Downshifted</td>
-                  </tr>
-                  <tr>
-                    <td>Cravings</td>
+                    <td>Late-night cravings</td>
                     <td>Easier to manage</td>
                   </tr>
                 </tbody>
@@ -729,10 +839,8 @@ export default function App() {
         {step === 'email' && (
           <div className="step">
             <div className="success-badge">✓</div>
-            <p className="hint" style={{ color: 'var(--success)', fontWeight: 700 }}>
-              YOUR PLAN IS READY
-            </p>
-            <h1>Enter your email to see your NightWalk plan</h1>
+            <p className="eyebrow success">Your plan is ready</p>
+            <h1>Enter your email to see your SleepClub plan</h1>
             <div className="email-box">
               <label htmlFor="email">Email address</label>
               <input
@@ -766,12 +874,12 @@ export default function App() {
                 </div>
                 <small style={{ color: 'var(--muted)' }}>Limited intro pricing</small>
               </div>
-              <button className="btn btn-accent" style={{ width: 'auto', padding: '10px 14px' }} type="button" onClick={() => go(1)}>
+              <button className="btn btn-accent timer-cta" type="button" onClick={() => go(1)}>
                 GET MY PLAN
               </button>
             </div>
-            <h1>Better sleep in 12 weeks</h1>
-            <p className="lede">NightWalk evening walks · clear weekly targets · steady build</p>
+            <h1>Get paid to sleep better</h1>
+            <p className="lede">Nightly goals · gift cards · 12-week plan that keeps you consistent</p>
             <div className="pricing">
               {(
                 [
@@ -792,7 +900,7 @@ export default function App() {
                     <span className="old">{old}</span>
                     {price}
                   </div>
-                  <span style={{ color: 'var(--success)', fontSize: 12, fontWeight: 700 }}>{tag}</span>
+                  <span className="save">{tag}</span>
                   <span className="day">{day}</span>
                 </button>
               ))}
@@ -807,19 +915,19 @@ export default function App() {
               </p>
             </div>
             <div className="stat-block" style={{ marginTop: 18 }}>
-              <div className="big">2.7×</div>
+              <div className="big">2×</div>
               <p>
-                Physical activity research links regular movement with better sleep quality. Walking 3 to 5 times a week
-                for 12 or more weeks is a common, realistic dose in those studies.
+                Sleep incentive research shows people sleep longer when good nights are rewarded. A clear goal plus gift
+                cards helps you stick with better rest for 12 weeks.
               </p>
             </div>
             <h2 style={{ marginTop: 22 }}>Everything in your plan</h2>
             <div className="week-grid">
               {[
-                ['Evening easy-pace walks', 'Tired enough for sleep, without hard workouts'],
-                ['Wind-down timing', 'When to walk so bedtime feels quieter'],
-                ['12-week progression', 'Clear weekly targets you can keep'],
-                ['Sleep and stress basics', 'Why nights improve when you move during the day'],
+                ['Nightly sleep goals', 'A target you can hit and get paid for'],
+                ['Gift card rewards', 'Points for good nights, redeem for brands you like'],
+                ['12-week progression', 'Clear weekly targets that build the habit'],
+                ['Sleep + weight basics', 'Why better nights make hunger and stress easier'],
               ].map(([t, d]) => (
                 <div className="week" key={t}>
                   <strong>{t}</strong>
@@ -852,20 +960,20 @@ export default function App() {
             </button>
             <h1>Complete your checkout</h1>
             <div className="review-card" style={{ marginTop: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div className="row-between">
                 <span>{answers.plan === '1' ? '1-Week' : answers.plan === '4' ? '4-Week' : '12-Week'} Plan</span>
                 <strong>{answers.plan === '1' ? '$9.99' : answers.plan === '4' ? '$29.99' : '$59.99'}</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--danger)', marginBottom: 8 }}>
+              <div className="row-between discount">
                 <span>Intro discount</span>
                 <span>{answers.plan === '1' ? '−$5.00' : answers.plan === '4' ? '−$12.00' : '−$30.00'}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, paddingTop: 8, borderTop: '1px solid var(--line)' }}>
+              <div className="row-between total">
                 <span>Total today</span>
                 <span>{answers.plan === '1' ? '$4.99' : answers.plan === '4' ? '$17.99' : '$29.99'}</span>
               </div>
               <p className="fine" style={{ marginTop: 10 }}>
-                Applied promo: SLEEPWALK12 · Demo checkout only (no real charge)
+                Applied promo: SLEEPPAY12 · Demo checkout only (no real charge)
               </p>
             </div>
             <div className="email-box">
